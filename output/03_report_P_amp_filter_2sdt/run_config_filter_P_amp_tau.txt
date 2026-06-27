@@ -1,0 +1,41 @@
+Filter and estimate P-wave Pd/tau parameters
+Station ML CSV: output/02_report_ML_compare_Huton_none_filter/station_ML_compare_Seisan_Hutton_nm_HZ.csv
+Input displacement root: output/02_disp_data
+Input velocity root: output/01_aligned_vel_data
+Output report root: output/03_report_P_amp_filter_2sdt
+Output figure root: output/03_report_P_amp_filter_2sdt/figures
+P components: ['HHZ']
+Required components in SAC: ['HHE', 'HHN', 'HHZ']
+P windows sec: [2.0, 3.0, 5.0]
+VP fallback: 6.5
+Displacement unit: nm
+Velocity unit: nm/s
+USE_BIAS_CENTERED_2STD_FILTER: True
+RESIDUAL_STD_MULTIPLIER: 2.0
+APPLY_H_COMPONENT_STD_FILTER: True
+MAX_H_STD: 0.3
+APPLY_Z_MINUS_H_FILTER: True
+MAX_ABS_Z_MINUS_H: 0.7
+REQUIRE_HEADER_ML: True
+KEEP_THEORY_S_SOURCE: True
+NOISE_PRE_P_SEC: 10.0
+NOISE_GAP_SEC: 0.5
+MIN_PREP_NOISE_SEC: 2.0
+MIN_P_WINDOW_SEC: 0.5
+TAUP_SMOOTHING_TAU_SEC: 1.0
+REMOVE_PREP_MEAN_FOR_PD: True
+REMOVE_PREP_MEAN_FOR_VELOCITY: True
+MAKE_PLOTS: True
+PLOT_USE_HEADER_ML: True
+PLOT_LOG10_PD: True
+PLOT_MIN_PD_NM: 1e-06
+
+Filter statistics:
+residual_mean: 0.3743312010389131
+residual_median: 0.3936604553786011
+residual_std: 0.5323707885408664
+residual_lower_limit: -0.6904103760428197
+residual_upper_limit: 1.4390727781206458
+n_input: 1932
+n_passed: 1766
+n_rejected: 166

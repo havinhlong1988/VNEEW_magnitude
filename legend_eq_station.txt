@@ -1,0 +1,6 @@
+H 12p,Times-Roman Earthquake / Station Legend
+D 0.2c 1p
+S 0.25c c 0.170c gray70 0.25p,black 0.6c M 3.0
+S 0.25c c 0.220c gray70 0.25p,black 0.6c M 4.0
+S 0.25c c 0.270c gray70 0.25p,black 0.6c M 5.0
+S 0.25c t 0.35c blue 0.3p,black 0.6c Seismic station

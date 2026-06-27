@@ -1,0 +1,7 @@
+input/
+figures
+figures/01_aligned_vel_data/
+figures/data_QC/
+output/01_aligned_vel_data/
+output/backup_01_aligned_vel_data/
+input/*/

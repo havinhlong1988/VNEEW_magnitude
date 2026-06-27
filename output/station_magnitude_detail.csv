@@ -1,0 +1,1 @@
+year,event_id,event_mag_header_mean,network,station,dist_km,pick_sec,pick_source,signal_end_sec,disp_unit,amp_z_raw,amp_z_um,ml_z,amp_h_raw,amp_h_um,ml_h,horiz_used,n_horiz

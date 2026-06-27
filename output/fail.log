@@ -1,0 +1,15 @@
+[FAIL] 20150912_171230_M3.1 | DBVB.HHE..SAC | TypeError: unsupported format string passed to NoneType.__format__
+[FAIL] 20150912_171230_M3.1 | DBVB.HHN..SAC | TypeError: unsupported format string passed to NoneType.__format__
+[FAIL] 20150912_171230_M3.1 | DBVB.HHZ..SAC | TypeError: unsupported format string passed to NoneType.__format__
+[FAIL] 20150912_171230_M3.1 | HBVB.HHE..SAC | TypeError: unsupported format string passed to NoneType.__format__
+[FAIL] 20150912_171230_M3.1 | HBVB.HHN..SAC | TypeError: unsupported format string passed to NoneType.__format__
+[FAIL] 20150912_171230_M3.1 | HBVB.HHZ..SAC | TypeError: unsupported format string passed to NoneType.__format__
+[FAIL] 20150912_171230_M3.1 | MLAV.HHE..SAC | TypeError: unsupported format string passed to NoneType.__format__
+[FAIL] 20150912_171230_M3.1 | MLAV.HHN..SAC | TypeError: unsupported format string passed to NoneType.__format__
+[FAIL] 20150912_171230_M3.1 | MLAV.HHZ..SAC | TypeError: unsupported format string passed to NoneType.__format__
+[FAIL] 20150912_171230_M3.1 | TGVB.HHE..SAC | TypeError: unsupported format string passed to NoneType.__format__
+[FAIL] 20150912_171230_M3.1 | TGVB.HHN..SAC | TypeError: unsupported format string passed to NoneType.__format__
+[FAIL] 20150912_171230_M3.1 | TGVB.HHZ..SAC | TypeError: unsupported format string passed to NoneType.__format__
+[FAIL] 20150912_171230_M3.1 | VIVB.HHE..SAC | TypeError: unsupported format string passed to NoneType.__format__
+[FAIL] 20150912_171230_M3.1 | VIVB.HHN..SAC | TypeError: unsupported format string passed to NoneType.__format__
+[FAIL] 20150912_171230_M3.1 | VIVB.HHZ..SAC | TypeError: unsupported format string passed to NoneType.__format__

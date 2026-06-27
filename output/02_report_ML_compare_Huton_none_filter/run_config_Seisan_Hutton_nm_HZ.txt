@@ -1,0 +1,30 @@
+Option A: velocity -> ground displacement -> SEISAN Hutton ML
+Wood-Anderson simulation: False
+Additional filtering: False by default
+Input velocity root: output/01_aligned_vel_data
+Output displacement root: output/02_disp_data
+Output report root: output/02_report_ML_compare_Huton_none_filter
+ML formula: SEISAN_HUTTON_NM
+ML equation: ML = log10(A_nm) + 1.11*log10(R_km) + 0.00189*R_km - 2.09
+Required station components: ['HHE', 'HHN', 'HHZ']
+Component rows: ['HHE', 'HHN', 'HHZ']
+Station/event ML horizontal components: ['HHE', 'HHN']
+Vertical diagnostic component: HHZ
+VP: 6.5
+VS: 3.5
+VSURFACE: 1.5
+AMP_AFTER_S_SEC: 0.0
+AMP_BEFORE_SURF_SEC: 2.0
+MIN_AMP_WINDOW_SEC: 5.0
+VELOCITY_INPUT_TO_NM_PER_SEC: 1.0
+DISPLACEMENT_OUTPUT_UNIT: nm
+WA_STATIC_MAGNIFICATION: 2080.0
+APPLY_FILTER_FOR_ML: False
+FILTER_FREQ_HZ: 0.05
+DEMEAN_VELOCITY_BEFORE_INTEGRATE: True
+DETREND_VELOCITY_BEFORE_INTEGRATE: True
+TAPER_VELOCITY_BEFORE_INTEGRATE: False
+DEMEAN_DISPLACEMENT_AFTER_INTEGRATE: False
+DETREND_DISPLACEMENT_AFTER_INTEGRATE: False
+REMOVE_WINDOW_MEAN_FOR_AMPLITUDE: True
+HEADER_ML_KEY: mag
