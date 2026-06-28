@@ -4,9 +4,15 @@ Input displacement root: output/02_disp_data
 Input velocity root: output/01_aligned_vel_data
 Output report root: output/03_report_P_amp_filter_2sdt
 Output figure root: output/03_report_P_amp_filter_2sdt/figures
+Pd peak check figure root: figures/03_pd_pick_peak_check
 P components: ['HHZ']
 Required components in SAC: ['HHE', 'HHN', 'HHZ']
-P windows sec: [2.0, 3.0, 5.0]
+P windows sec: [3.0]
+MAKE_PD_PEAK_CHECK_PLOTS: True
+PLOT_REJECTED_WAVEFORM_CHECKS: True
+PD_PEAK_CHECK_WINDOW_SEC: 3.0
+PD_PEAK_PLOT_PRE_P_SEC: 1.0
+PD_PEAK_PLOT_POST_P_SEC: 4.0
 VP fallback: 6.5
 Displacement unit: nm
 Velocity unit: nm/s
@@ -25,10 +31,24 @@ MIN_P_WINDOW_SEC: 0.5
 TAUP_SMOOTHING_TAU_SEC: 1.0
 REMOVE_PREP_MEAN_FOR_PD: True
 REMOVE_PREP_MEAN_FOR_VELOCITY: True
+APPLY_PD_HIGHPASS_FILTER: True
+PD_HIGHPASS_FREQ_HZ: 0.075
+PD_HIGHPASS_CORNERS: 2
+PD_HIGHPASS_ZEROPHASE: False
+PD_HIGHPASS_TAPER_MAX_PERCENTAGE: 0.05
+PD_HIGHPASS_DETREND: True
+NM_TO_CM: 1e-06
+WU_MPD_A: 4.748
+WU_MPD_B: 1.371
+WU_MPD_C: 1.883
+WU_MPD_REFERENCE_COL: header_ML
+PLOT_WU_MPD_RESULTS: True
 MAKE_PLOTS: True
 PLOT_USE_HEADER_ML: True
+PLOT_PD_UNIT: cm
 PLOT_LOG10_PD: True
 PLOT_MIN_PD_NM: 1e-06
+PLOT_MIN_PD_CM: 1e-12
 
 Filter statistics:
 residual_mean: 0.3743312010389131

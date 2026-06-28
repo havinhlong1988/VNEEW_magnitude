@@ -1,0 +1,2 @@
+equation_name,equation,tau_column,tau_unit,M_column,A,B,sigma_res,sigma_res_mode,sigma_res_ols,sigma_res_std,sigma_res_robust,n,dof,r2,adj_r2,rmse_M,residual_median,residual_mean
+Mtaup,M_tau = A + B*log10(tau) ± sigma_res,tau_p_max_3s_sec,sec,header_ML,3.3257604727780423,0.027964045955014147,0.6282060261375609,ols,0.6282060261375609,0.6280270245593047,0.520193013074683,1756,1754,0.0008074524429205754,0.00023778736449586724,0.6278481759085018,-0.03166473291462912,-2.832459652802222e-16

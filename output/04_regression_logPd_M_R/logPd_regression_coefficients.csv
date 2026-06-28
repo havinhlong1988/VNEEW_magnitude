@@ -1,0 +1,8 @@
+parameter,value,standard_error,description
+A,-2.888019453296078,0.08492838215859293,intercept
+B,0.6021049428156142,0.01759671436479615,coefficient for header_ML
+C,-1.2331629315394759,0.04111392399130437,coefficient for log10(distance_km)
+sigma_res,0.4253081574705432,,"residual scatter in log10(Pd), mode=ols"
+sigma_res_ols,0.4253081574705432,,sqrt(SSE/(N-3)) in log10(Pd)
+sigma_res_std,0.42506574755773524,,standard deviation of residuals in log10(Pd)
+sigma_res_robust,0.3634951689771694,,1.4826*MAD residual in log10(Pd)

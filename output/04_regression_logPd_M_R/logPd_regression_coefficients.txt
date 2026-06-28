@@ -1,0 +1,67 @@
+Linear regression for 3-second peak displacement
+================================================
+
+Regression equation
+-------------------
+log10(Pd) = A + B*M + C*log10(R) ± sigma_res
+Pd column: Pd_3s_cm
+Pd unit: cm
+M column: header_ML
+R column: distance_km [km]
+Data mode: station
+
+Best-fit equation
+-----------------
+log10(Pd_cm) = -2.88801945 + 0.60210494*M + -1.23316293*log10(R_km) ± 0.42530816
+
+Residual meaning
+----------------
+sigma_res mode: ols
+sigma_res is in log10(Pd) units.
+1-sigma amplitude factor = 10^sigma = 2.66261
+2-sigma amplitude factor = 10^(2*sigma) = 7.08951
+Equivalent sigma in Mpd = sigma_res / |B| = 0.706369
+
+Magnitude inversion
+-------------------
+Mpd = (log10(Pd) - A - C*log10(R)) / B
+This is used only for the Mpd versus header ML diagnostic plot.
+
+Coefficients
+------------
+A = -2.8880194533 ± 0.0849283822
+B = 0.6021049428 ± 0.0175967144
+C = -1.2331629315 ± 0.0411139240
+sigma_res = 0.4253081575
+sigma_res_ols = 0.4253081575
+sigma_res_std = 0.4250657476
+sigma_res_robust = 0.3634951690
+
+Fit statistics
+--------------
+n: 1756
+n_parameters: 3
+dof: 1753
+rank: 3
+r2: 0.45971474308374294
+adj_r2: 0.4590983309252532
+rmse_log10Pd: 0.42494469793330775
+residual_mean: 1.2058185379072315e-15
+residual_median: -0.025576558763078072
+residual_std: 0.42506574755773524
+residual_mad: 0.24517413258948428
+residual_robust_sigma: 0.3634951689771694
+residual_min: -2.6534072506973474
+residual_p05: -0.6243199274834936
+residual_p16: -0.3711696427995985
+residual_p84: 0.3955942832816308
+residual_p95: 0.7347651609608393
+residual_max: 1.548701471084026
+clip_iterations_done: 0
+n_after_clip: 1756
+
+Output files
+------------
+Equation CSV: output/04_regression_logPd_M_R/logPd_regression_equation_summary.csv
+Coefficient CSV: output/04_regression_logPd_M_R/logPd_regression_coefficients.csv
+Prediction CSV: output/04_regression_logPd_M_R/logPd_regression_predictions.csv

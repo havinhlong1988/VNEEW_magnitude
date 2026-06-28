@@ -27,12 +27,17 @@ Workflow
    No SAC file name/path is written to output tables.
 
 4. Measure from vertical component HHZ by default:
-       Pd      = zero-to-peak displacement amplitude in nm
+       Pd      = zero-to-peak high-pass-filtered displacement amplitude
+                 saved in both nm and cm
        tau_c   = 2*pi*sqrt(integral(u^2 dt) / integral(v^2 dt))
        tau_p   = recursive dominant-period proxy
 
-   for P windows:
-       P+2 s, P+3 s, P+5 s
+   for P window:
+       P+3 s only
+
+   Pd follows the EEW-style convention:
+       displacement high-pass filtered at 0.075 Hz before peak picking
+       Pd_cm = Pd_nm * 1e-7
 
 5. Save tables and figures to:
        output/03_report_P_amp_filter_2sdt
@@ -71,6 +76,10 @@ INPUT_VEL_ROOT = Path("output/01_aligned_vel_data")    # velocity SAC, unit nm/s
 OUTPUT_REPORT_ROOT = Path("output/03_report_P_amp_filter_2sdt")
 OUTPUT_FIG_ROOT = OUTPUT_REPORT_ROOT / "figures"
 
+# Individual waveform check figures for each accepted event-station-component.
+# Requested output pattern: figures/03_pd_pick_peak_check/*/*.png
+PD_PEAK_CHECK_FIG_ROOT = Path("figures/03_pd_pick_peak_check")
+
 # Component for P-wave Pd/tau measurement.
 # For EEW-style Pd, vertical P displacement is commonly used first.
 P_COMPONENTS = ["HHZ"]
@@ -79,7 +88,7 @@ P_COMPONENTS = ["HHZ"]
 REQUIRED_COMPONENTS_IN_SAC = ["HHE", "HHN", "HHZ"]
 
 # P-window lengths in seconds.
-P_WINDOWS_SEC = [2.0, 3.0, 5.0]
+P_WINDOWS_SEC = [3.0]
 
 # Fallback theoretical P pick if SAC P pick is missing.
 VP = 6.5  # km/s
@@ -119,11 +128,51 @@ TAUP_SMOOTHING_TAU_SEC = 1.0
 REMOVE_PREP_MEAN_FOR_PD = True
 REMOVE_PREP_MEAN_FOR_VELOCITY = True
 
+# ---------------------------------------------------------------------
+# Pd high-pass filter and output unit.
+# ---------------------------------------------------------------------
+# Literature-style Pd is usually measured after removing long-period drift.
+# Here we filter the displacement trace before picking Pd.
+APPLY_PD_HIGHPASS_FILTER = True
+PD_HIGHPASS_FREQ_HZ = 0.075
+PD_HIGHPASS_CORNERS = 2
+PD_HIGHPASS_ZEROPHASE = False       # False is closer to one-way real-time filtering.
+PD_HIGHPASS_TAPER_MAX_PERCENTAGE = 0.05
+PD_HIGHPASS_DETREND = True
+
+# Unit conversion.
+# Hutton/SEISAN ML check remains in nm.
+# Pd regression output should use cm.
+NM_TO_CM = 1.0e-6
+
+# ---------------------------------------------------------------------
+# Wu-equation Mpd.
+# ---------------------------------------------------------------------
+# Mpd is ALWAYS calculated in the output table.
+# The plotting of Mpd diagnostics is optional.
+WU_MPD_A = 4.748
+WU_MPD_B = 1.371
+WU_MPD_C = 1.883
+WU_MPD_REFERENCE_COL = "header_ML"
+PLOT_WU_MPD_RESULTS = True
+
 # Plot controls.
 MAKE_PLOTS = True
 PLOT_USE_HEADER_ML = True       # True: x-axis = header_ML; False: ML_station_mean
-PLOT_LOG10_PD = True            # True: y-axis = log10(Pd_nm)
+PLOT_PD_UNIT = "cm"             # "cm" for EEW Pd regression plots, or "nm"
+PLOT_LOG10_PD = True            # True: y-axis = log10(Pd)
 PLOT_MIN_PD_NM = 1e-6           # avoid log10(0)
+PLOT_MIN_PD_CM = PLOT_MIN_PD_NM * NM_TO_CM
+
+# Individual waveform QC figure for Pd picking.
+# This is the slow part because it creates one full-waveform + zoom figure
+# for every station-event component. Turn it off for fast final report runs.
+MAKE_PD_PEAK_CHECK_PLOTS = True
+PLOT_REJECTED_WAVEFORM_CHECKS = True
+PD_PEAK_CHECK_WINDOW_SEC = 3.0
+PD_PEAK_PLOT_PRE_P_SEC = 1.0
+PD_PEAK_PLOT_POST_P_SEC = 4.0
+PD_PEAK_PLOT_DPI = 180
 
 # SAC undefined value.
 SAC_UNDEF = -12345.0
@@ -131,8 +180,8 @@ SAC_UNDEF = -12345.0
 # Output files.
 PASSED_CSV = OUTPUT_REPORT_ROOT / "station_event_passed_2sdt.csv"
 REJECTED_CSV = OUTPUT_REPORT_ROOT / "station_event_rejected_2sdt.csv"
-P_TABLE_CSV = OUTPUT_REPORT_ROOT / "P_amp_tau_Z_2_3_5s_passed_2sdt.csv"
-EVENT_SUMMARY_CSV = OUTPUT_REPORT_ROOT / "event_summary_P_amp_tau_Z_2_3_5s.csv"
+P_TABLE_CSV = OUTPUT_REPORT_ROOT / "P_amp_tau_Z_3s_passed_2sdt.csv"
+EVENT_SUMMARY_CSV = OUTPUT_REPORT_ROOT / "event_summary_P_amp_tau_Z_3s.csv"
 CONFIG_TXT = OUTPUT_REPORT_ROOT / "run_config_filter_P_amp_tau.txt"
 FAIL_LOG = OUTPUT_REPORT_ROOT / "fail.log"
 SUCCESS_LOG = OUTPUT_REPORT_ROOT / "success.log"
@@ -144,6 +193,7 @@ SUCCESS_LOG = OUTPUT_REPORT_ROOT / "success.log"
 
 OUTPUT_REPORT_ROOT.mkdir(parents=True, exist_ok=True)
 OUTPUT_FIG_ROOT.mkdir(parents=True, exist_ok=True)
+PD_PEAK_CHECK_FIG_ROOT.mkdir(parents=True, exist_ok=True)
 FAIL_LOG.write_text("")
 SUCCESS_LOG.write_text("")
 
@@ -570,6 +620,253 @@ def compute_tau_p_max_sec(
     return float(np.nanmax(arr)), float(arr[-1])
 
 
+
+# =====================================================================
+# INDIVIDUAL PD WINDOW CHECK PLOTS
+# =====================================================================
+
+def make_scaled_trace(tr: Trace, scale: float = 1.0) -> Trace:
+    """
+    Return a trace copy with data converted by a scale factor.
+
+    For displacement:
+        scale = DISPLACEMENT_INPUT_TO_NM
+        output data unit = nm
+
+    For velocity:
+        scale = VELOCITY_INPUT_TO_NM_PER_SEC
+        output data unit = nm/s
+    """
+    out = tr.copy()
+    out.data = out.data.astype(np.float64) * float(scale)
+    return out
+
+
+def highpass_trace_for_pd(tr: Trace, scale: float = 1.0) -> Trace:
+    """
+    Scale and high-pass filter a trace for Pd/tau measurement.
+
+    Filtering is applied to the whole trace before the P window is cut.
+    This reduces edge artifacts compared with filtering only the short window.
+    """
+    out = make_scaled_trace(tr, scale=scale)
+
+    if not APPLY_PD_HIGHPASS_FILTER:
+        return out
+
+    try:
+        if PD_HIGHPASS_DETREND:
+            out.detrend("demean")
+            out.detrend("linear")
+
+        if PD_HIGHPASS_TAPER_MAX_PERCENTAGE and PD_HIGHPASS_TAPER_MAX_PERCENTAGE > 0:
+            out.taper(max_percentage=float(PD_HIGHPASS_TAPER_MAX_PERCENTAGE))
+
+        out.filter(
+            "highpass",
+            freq=float(PD_HIGHPASS_FREQ_HZ),
+            corners=int(PD_HIGHPASS_CORNERS),
+            zerophase=bool(PD_HIGHPASS_ZEROPHASE),
+        )
+    except Exception as e:
+        raise RuntimeError(
+            f"High-pass filter failed: freq={PD_HIGHPASS_FREQ_HZ}, "
+            f"corners={PD_HIGHPASS_CORNERS}, zerophase={PD_HIGHPASS_ZEROPHASE}: {e}"
+        )
+
+    return out
+
+
+def get_processed_disp_and_vel_for_pd(
+    tr_disp: Trace,
+    tr_vel: Trace,
+) -> Tuple[Trace, Trace]:
+    """
+    Return displacement and velocity traces in nm / nm/s after applying
+    the Pd high-pass filter.
+
+    The same high-pass corner is applied to both displacement and velocity so
+    tau_c and tau_p use consistent long-period content.
+    """
+    tr_disp_hp = highpass_trace_for_pd(tr_disp, scale=DISPLACEMENT_INPUT_TO_NM)
+    tr_vel_hp = highpass_trace_for_pd(tr_vel, scale=VELOCITY_INPUT_TO_NM_PER_SEC)
+    return tr_disp_hp, tr_vel_hp
+
+
+
+def safe_name(x: object) -> str:
+    """Make a safe string for file/folder names."""
+    s = str(x).strip()
+    for ch in ["/", "\\", " ", ":", "*", "?", "\"", "<", ">", "|"]:
+        s = s.replace(ch, "_")
+    return s
+
+
+def plot_pd_peak_window_check(
+    tr_disp: Trace,
+    event: str,
+    net: str,
+    sta: str,
+    comp: str,
+    p_pick: UTCDateTime,
+    p_source: str,
+    p_label: str,
+    distance_km: float,
+    header_ml: float,
+    ml_station_mean: float,
+    ml_filter_passed: bool = True,
+    ml_filter_reason: str = "",
+) -> None:
+    """
+    Plot processed displacement waveform with two stacked subfigures:
+    - Top   : full processed waveform.
+    - Bottom: zoom-in view around the P pick and 3-second Pd window.
+
+    The plotted data are scaled to nm, detrended/demeaned, tapered,
+    high-pass filtered, and baseline corrected. No raw/unfiltered trace is shown.
+    Pd peak is picked from the same processed trace.
+    """
+    if not MAKE_PD_PEAK_CHECK_PLOTS:
+        return
+
+    w = float(PD_PEAK_CHECK_WINDOW_SEC)
+    zoom_t0 = p_pick - float(PD_PEAK_PLOT_PRE_P_SEC)
+    zoom_t1 = p_pick + float(PD_PEAK_PLOT_POST_P_SEC)
+
+    try:
+        tr_hp_full = highpass_trace_for_pd(tr_disp, scale=DISPLACEMENT_INPUT_TO_NM)
+    except Exception as e:
+        log_fail(f"[PLOT-FILTER-FAIL] {event} {net}.{sta}.{comp} :: {e}")
+        return
+
+    if tr_hp_full.stats.npts < 2:
+        log_fail(f"[PLOT-FAIL] {event} {net}.{sta}.{comp} too few samples for full-waveform plot")
+        return
+
+    # Full processed waveform time axis.
+    dt_full = float(tr_hp_full.stats.delta)
+    t_rel_full = (
+        np.arange(tr_hp_full.stats.npts, dtype=float) * dt_full
+        + float(tr_hp_full.stats.starttime - p_pick)
+    )
+    hp_full = tr_hp_full.data.astype(np.float64)
+
+    # Baseline correction on processed trace for cleaner Pd picking/plotting.
+    noise_t0 = p_pick - NOISE_PRE_P_SEC
+    noise_t1 = p_pick - NOISE_GAP_SEC
+    hp_noise_mean, _ = window_mean(tr_hp_full, noise_t0, noise_t1)
+
+    if REMOVE_PREP_MEAN_FOR_PD and np.isfinite(hp_noise_mean):
+        hp_full_corr = hp_full - hp_noise_mean
+    else:
+        hp_full_corr = hp_full - hp_full[0]
+
+    ml_filter_status = "ACCEPTED / USED" if bool(ml_filter_passed) else "REJECTED / NOT USED"
+    ml_filter_color = "blue" if bool(ml_filter_passed) else "red"
+    ml_filter_note = f"ML filter: {ml_filter_status}"
+
+    # Zoom processed waveform.
+    tr_hp_zoom = tr_hp_full.copy()
+    tr_hp_zoom.trim(zoom_t0, zoom_t1, pad=False)
+
+    if tr_hp_zoom.stats.npts < 2:
+        log_fail(f"[PLOT-FAIL] {event} {net}.{sta}.{comp} too few samples for zoom plot")
+        return
+
+    dt_zoom = float(tr_hp_zoom.stats.delta)
+    t_rel_zoom = (
+        np.arange(tr_hp_zoom.stats.npts, dtype=float) * dt_zoom
+        + float(tr_hp_zoom.stats.starttime - p_pick)
+    )
+    hp_zoom = tr_hp_zoom.data.astype(np.float64)
+
+    if REMOVE_PREP_MEAN_FOR_PD and np.isfinite(hp_noise_mean):
+        hp_zoom_corr = hp_zoom - hp_noise_mean
+    else:
+        hp_zoom_corr = hp_zoom - hp_zoom[0]
+
+    # Pd peak from processed/high-pass displacement in P to P+3 s.
+    mask_zoom = (t_rel_zoom >= 0.0) & (t_rel_zoom <= w) & np.isfinite(hp_zoom_corr)
+    if mask_zoom.sum() < 2:
+        log_fail(f"[PLOT-FAIL] {event} {net}.{sta}.{comp} no valid samples in P+{w:g}s window")
+        return
+
+    t_win = t_rel_zoom[mask_zoom]
+    y_win = hp_zoom_corr[mask_zoom]
+    i_peak = int(np.nanargmax(np.abs(y_win)))
+
+    peak_t_rel = float(t_win[i_peak])
+    peak_signed_nm = float(y_win[i_peak])
+    pd_nm = abs(peak_signed_nm)
+    pd_cm = pd_nm * NM_TO_CM
+    peak_abs_time = p_pick + peak_t_rel
+
+    # Find matching full-trace point for the peak marker.
+    i_full_peak = int(np.nanargmin(np.abs(t_rel_full - peak_t_rel)))
+    peak_full_y = float(hp_full_corr[i_full_peak])
+
+    out_dir = PD_PEAK_CHECK_FIG_ROOT / safe_name(event)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / f"{safe_name(event)}_{safe_name(net)}_{safe_name(sta)}_{safe_name(comp)}_P3s_peak.png"
+
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1, figsize=(11.0, 7.4), sharex=False,
+        gridspec_kw={"height_ratios": [1.0, 1.15]}
+    )
+
+    filter_label = (
+        f"detrend+demean+taper+HP {PD_HIGHPASS_FREQ_HZ:g} Hz, "
+        f"corners={PD_HIGHPASS_CORNERS}, zerophase={PD_HIGHPASS_ZEROPHASE}"
+        if APPLY_PD_HIGHPASS_FILTER else "scaled + baseline corrected only"
+    )
+
+    # Top: full processed waveform.
+    ax1.plot(t_rel_full, hp_full_corr, linewidth=0.95, label=f"processed displacement ({DISP_UNIT})")
+    ax1.axvline(0.0, linewidth=1.2, linestyle="--", label=f"P pick ({p_source}, {p_label})")
+    ax1.axvspan(0.0, w, color="lightyellow", alpha=0.6, label=f"Pd window: P to P+{w:g}s")
+    ax1.axhline(0.0, linewidth=0.8)
+    ax1.scatter([peak_t_rel], [peak_full_y], s=40, color="red", zorder=5, label="Pd peak")
+    ax1.set_title(f"Full processed waveform: {event} | {net}.{sta}.{comp} | {filter_label}", fontsize=10)
+    ax1.set_xlabel("Time from P pick (s)")
+    ax1.set_ylabel(f"Displacement ({DISP_UNIT})")
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(loc="best", fontsize=8)
+
+    # Bottom: zoom around P pick.
+    ax2.plot(t_rel_zoom, hp_zoom_corr, linewidth=1.05, label=f"processed displacement ({DISP_UNIT})")
+    ax2.axvline(0.0, linewidth=1.4, linestyle="--", label=f"P pick ({p_source}, {p_label})")
+    ax2.axvspan(0.0, w, color="lightyellow", alpha=0.6, label=f"Pd window: P to P+{w:g}s")
+    ax2.axhline(0.0, linewidth=0.8)
+    ax2.scatter([peak_t_rel], [peak_signed_nm], s=75, color="red", zorder=5, label="Pd peak")
+    ax2.annotate(
+        f"Pd = {pd_cm:.4e} cm\n"
+        f"t = P + {peak_t_rel:.3f} s",
+        xy=(peak_t_rel, peak_signed_nm),
+        xytext=(10, 18),
+        textcoords="offset points",
+        arrowprops=dict(arrowstyle="->", linewidth=0.9),
+        fontsize=9,
+        bbox=dict(boxstyle="round,pad=0.3", alpha=0.85),
+    )
+    ax2.set_xlim(float(t_rel_zoom.min()), float(t_rel_zoom.max()))
+    ax2.set_title(
+        f"Zoom-in: R={distance_km:.2f} km | header ML={header_ml:.2f} | "
+        f"MLcal={ml_station_mean:.2f} | peak={peak_abs_time.isoformat()} | "
+        f"{ml_filter_note}",
+        fontsize=10,
+        color=ml_filter_color,
+    )
+    ax2.set_xlabel("Time from P pick (s)")
+    ax2.set_ylabel(f"Displacement ({DISP_UNIT})")
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(loc="best", fontsize=8)
+
+    fig.tight_layout()
+    fig.savefig(out_file, dpi=int(PD_PEAK_PLOT_DPI))
+    plt.close(fig)
+
+
+
 # =====================================================================
 # P-WAVE MEASUREMENT
 # =====================================================================
@@ -582,15 +879,24 @@ def measure_p_metrics_for_component(
 ) -> dict:
     """
     Measure Pd, tau_c, tau_p, and SNR for all P windows.
+
+    Pd is picked from high-pass-filtered displacement and saved in nm and cm.
+    tau_c and tau_p use high-pass-filtered displacement and velocity.
     """
     out: dict = {}
+
+    try:
+        tr_disp_proc, tr_vel_proc = get_processed_disp_and_vel_for_pd(tr_disp, tr_vel)
+    except Exception as e:
+        raise RuntimeError(f"Could not prepare high-pass traces for Pd/tau: {e}")
 
     noise_t0 = p_pick - NOISE_PRE_P_SEC
     noise_t1 = p_pick - NOISE_GAP_SEC
     noise_len = float(noise_t1 - noise_t0)
 
-    disp_noise_mean, disp_noise_npts = window_mean(tr_disp, noise_t0, noise_t1)
-    vel_noise_mean, vel_noise_npts = window_mean(tr_vel, noise_t0, noise_t1)
+    # Noise and baseline are computed on the processed/high-pass displacement.
+    disp_noise_mean, disp_noise_npts = window_mean(tr_disp_proc, noise_t0, noise_t1)
+    vel_noise_mean, vel_noise_npts = window_mean(tr_vel_proc, noise_t0, noise_t1)
 
     out["preP_noise_window_start"] = noise_t0.isoformat()
     out["preP_noise_window_end"] = noise_t1.isoformat()
@@ -599,8 +905,12 @@ def measure_p_metrics_for_component(
     out["preP_noise_npts_vel"] = int(vel_noise_npts)
     out["preP_disp_mean_nm"] = disp_noise_mean
     out["preP_vel_mean_nmps"] = vel_noise_mean
+    out["Pd_filter_applied"] = bool(APPLY_PD_HIGHPASS_FILTER)
+    out["Pd_highpass_freq_Hz"] = float(PD_HIGHPASS_FREQ_HZ) if APPLY_PD_HIGHPASS_FILTER else np.nan
+    out["Pd_highpass_corners"] = int(PD_HIGHPASS_CORNERS) if APPLY_PD_HIGHPASS_FILTER else np.nan
+    out["Pd_highpass_zerophase"] = bool(PD_HIGHPASS_ZEROPHASE) if APPLY_PD_HIGHPASS_FILTER else False
 
-    disp_noise_data, _ = trim_data_array(tr_disp, noise_t0, noise_t1)
+    disp_noise_data, _ = trim_data_array(tr_disp_proc, noise_t0, noise_t1)
     if (
         noise_len >= MIN_PREP_NOISE_SEC
         and disp_noise_data.size >= 2
@@ -614,7 +924,9 @@ def measure_p_metrics_for_component(
         noise_rms_nm = np.nan
 
     out["preP_noise_absmax_nm"] = noise_absmax_nm
+    out["preP_noise_absmax_cm"] = noise_absmax_nm * NM_TO_CM if np.isfinite(noise_absmax_nm) else np.nan
     out["preP_noise_rms_nm"] = noise_rms_nm
+    out["preP_noise_rms_cm"] = noise_rms_nm * NM_TO_CM if np.isfinite(noise_rms_nm) else np.nan
 
     for w in windows_sec:
         wtag = f"{int(w)}s" if float(w).is_integer() else f"{w:g}s"
@@ -623,16 +935,16 @@ def measure_p_metrics_for_component(
         t1 = p_pick + float(w)
         actual_sec = float(t1 - t0)
 
-        disp_data, _ = trim_data_array(tr_disp, t0, t1)
-        vel_data, _ = trim_data_array(tr_vel, t0, t1)
+        disp_data, _ = trim_data_array(tr_disp_proc, t0, t1)
+        vel_data, _ = trim_data_array(tr_vel_proc, t0, t1)
 
         n = min(disp_data.size, vel_data.size)
 
         if n < 2 or actual_sec < MIN_P_WINDOW_SEC:
-            out[f"Pd_{wtag}_nm"] = np.nan
-            out[f"Pd_{wtag}_um"] = np.nan
-            out[f"Pd_{wtag}_ground_mm"] = np.nan
+            out[f"Pd_{wtag}_cm"] = np.nan
+            out[f"Pd_peak_signed_{wtag}_cm"] = np.nan
             out[f"Pd_peak_time_{wtag}"] = ""
+            out[f"Pd_peak_t_rel_{wtag}_sec"] = np.nan
             out[f"tau_c_{wtag}_sec"] = np.nan
             out[f"tau_p_max_{wtag}_sec"] = np.nan
             out[f"tau_p_end_{wtag}_sec"] = np.nan
@@ -641,36 +953,44 @@ def measure_p_metrics_for_component(
             out[f"npts_{wtag}"] = int(n)
             continue
 
-        disp = disp_data[:n].astype(np.float64) * float(DISPLACEMENT_INPUT_TO_NM)
-        vel = vel_data[:n].astype(np.float64) * float(VELOCITY_INPUT_TO_NM_PER_SEC)
+        disp = disp_data[:n].astype(np.float64)   # already nm
+        vel = vel_data[:n].astype(np.float64)     # already nm/s
 
         if REMOVE_PREP_MEAN_FOR_PD and np.isfinite(disp_noise_mean):
-            disp_corr = disp - disp_noise_mean * float(DISPLACEMENT_INPUT_TO_NM)
+            disp_corr = disp - disp_noise_mean
         else:
             disp_corr = disp - disp[0]
 
         if REMOVE_PREP_MEAN_FOR_VELOCITY and np.isfinite(vel_noise_mean):
-            vel_corr = vel - vel_noise_mean * float(VELOCITY_INPUT_TO_NM_PER_SEC)
+            vel_corr = vel - vel_noise_mean
         else:
             vel_corr = vel - np.nanmean(vel)
 
         if not np.any(np.isfinite(disp_corr)):
             pd_nm = np.nan
+            pd_cm = np.nan
             pd_um = np.nan
             pd_mm = np.nan
+            peak_signed_nm = np.nan
+            peak_signed_cm = np.nan
             peak_time = ""
+            peak_t_rel = np.nan
         else:
             idx = int(np.nanargmax(np.abs(disp_corr)))
-            pd_nm = float(abs(disp_corr[idx]))
+            peak_signed_nm = float(disp_corr[idx])
+            pd_nm = float(abs(peak_signed_nm))
+            pd_cm = pd_nm * NM_TO_CM
             pd_um = pd_nm * 1e-3
             pd_mm = pd_nm * 1e-6
+            peak_signed_cm = peak_signed_nm * NM_TO_CM
+            peak_t_rel = idx * float(tr_disp_proc.stats.delta)
 
-            trw = tr_disp.copy()
+            trw = tr_disp_proc.copy()
             trw.trim(t0, t1, pad=False)
             peak_abs_time = trw.stats.starttime + idx * float(trw.stats.delta)
             peak_time = peak_abs_time.isoformat()
 
-        dt = float(tr_disp.stats.delta)
+        dt = float(tr_disp_proc.stats.delta)
         tau_c = compute_tau_c_sec(disp_corr, vel_corr, dt)
         tau_p_max, tau_p_end = compute_tau_p_max_sec(disp_corr, vel_corr, dt)
 
@@ -684,10 +1004,10 @@ def measure_p_metrics_for_component(
         else:
             snr_rms = np.nan
 
-        out[f"Pd_{wtag}_nm"] = pd_nm
-        out[f"Pd_{wtag}_um"] = pd_um
-        out[f"Pd_{wtag}_ground_mm"] = pd_mm
+        out[f"Pd_{wtag}_cm"] = pd_cm
+        out[f"Pd_peak_signed_{wtag}_cm"] = peak_signed_cm
         out[f"Pd_peak_time_{wtag}"] = peak_time
+        out[f"Pd_peak_t_rel_{wtag}_sec"] = peak_t_rel
         out[f"tau_c_{wtag}_sec"] = tau_c
         out[f"tau_p_max_{wtag}_sec"] = tau_p_max
         out[f"tau_p_end_{wtag}_sec"] = tau_p_end
@@ -698,9 +1018,67 @@ def measure_p_metrics_for_component(
     return out
 
 
-def process_passed_row(row: pd.Series) -> List[dict]:
+def calculate_wu_mpd(pd_cm: float, distance_km: float) -> float:
     """
-    Process one passed event-station row.
+    Calculate Mpd from Wu-style Pd equation.
+
+        Mpd = A + B*log10(Pd_cm) + C*log10(R_km)
+
+    Pd must be in cm.
+    Distance must be in km.
+    """
+    if not np.isfinite(pd_cm) or not np.isfinite(distance_km):
+        return np.nan
+    if pd_cm <= 0 or distance_km <= 0:
+        return np.nan
+
+    return float(
+        WU_MPD_A
+        + WU_MPD_B * np.log10(float(pd_cm))
+        + WU_MPD_C * np.log10(float(distance_km))
+    )
+
+
+def add_wu_mpd_metrics(out: dict) -> dict:
+    """
+    Add Wu-equation Mpd and Mpd-header difference to one output row.
+
+    This is always calculated for accepted rows when Pd and distance are valid.
+    """
+    distance_km = finite_float(out.get("distance_km", np.nan))
+    ref_mag = finite_float(out.get(WU_MPD_REFERENCE_COL, np.nan))
+
+    for w in P_WINDOWS_SEC:
+        wtag = f"{int(w)}s" if float(w).is_integer() else f"{w:g}s"
+        pd_col = f"Pd_{wtag}_cm"
+        mpd_col = f"Mpd_Wu_{wtag}"
+        diff_col = f"Mpd_Wu_{wtag}_minus_{WU_MPD_REFERENCE_COL}"
+        inv_diff_col = f"{WU_MPD_REFERENCE_COL}_minus_Mpd_Wu_{wtag}"
+
+        pd_cm = finite_float(out.get(pd_col, np.nan))
+        mpd = calculate_wu_mpd(pd_cm=pd_cm, distance_km=distance_km)
+
+        out[mpd_col] = mpd
+
+        if np.isfinite(mpd) and np.isfinite(ref_mag):
+            out[diff_col] = float(mpd - ref_mag)
+            out[inv_diff_col] = float(ref_mag - mpd)
+        else:
+            out[diff_col] = np.nan
+            out[inv_diff_col] = np.nan
+
+    return out
+
+
+
+def process_passed_row(row: pd.Series, collect_metrics: bool = True) -> List[dict]:
+    """
+    Process one station-event row.
+
+    If collect_metrics is True, save the Pd/tau result row.
+    If collect_metrics is False, only make the Pd peak-check figure.
+    This allows rejected stations to be plotted in red without entering
+    the final accepted Pd table.
     """
     event = str(row["event"])
     net = str(row["net"])
@@ -757,12 +1135,38 @@ def process_passed_row(row: pd.Series) -> List[dict]:
         tr_disp = disp_all[comp]
         tr_vel = vel_all[comp]
 
-        metrics = measure_p_metrics_for_component(
-            tr_disp=tr_disp,
-            tr_vel=tr_vel,
-            p_pick=p_pick,
-            windows_sec=P_WINDOWS_SEC,
-        )
+        if collect_metrics:
+            metrics = measure_p_metrics_for_component(
+                tr_disp=tr_disp,
+                tr_vel=tr_vel,
+                p_pick=p_pick,
+                windows_sec=P_WINDOWS_SEC,
+            )
+        else:
+            metrics = {}
+
+        ml_filter_passed = bool(row.get("pass_filter", True))
+        ml_filter_reason = str(row.get("reject_reason", "") or "")
+
+        if MAKE_PD_PEAK_CHECK_PLOTS:
+            plot_pd_peak_window_check(
+                tr_disp=tr_disp,
+                event=event,
+                net=net,
+                sta=sta,
+                comp=comp,
+                p_pick=p_pick,
+                p_source=p_source,
+                p_label=p_label,
+                distance_km=distance_km,
+                header_ml=finite_float(row.get("header_ML", np.nan)),
+                ml_station_mean=finite_float(row.get("ML_station_mean", np.nan)),
+                ml_filter_passed=ml_filter_passed,
+                ml_filter_reason=ml_filter_reason,
+            )
+
+        if not collect_metrics:
+            continue
 
         out = {
             "event": event,
@@ -791,6 +1195,7 @@ def process_passed_row(row: pd.Series) -> List[dict]:
         }
 
         out.update(metrics)
+        out = add_wu_mpd_metrics(out)
         rows.append(out)
 
     if rows:
@@ -820,7 +1225,11 @@ def make_event_summary(p_df: pd.DataFrame) -> pd.DataFrame:
         wtag = f"{int(w)}s" if float(w).is_integer() else f"{w:g}s"
 
         for col in [
-            f"Pd_{wtag}_nm",
+            f"Pd_{wtag}_cm",
+            f"Pd_peak_t_rel_{wtag}_sec",
+            f"Mpd_Wu_{wtag}",
+            f"Mpd_Wu_{wtag}_minus_{WU_MPD_REFERENCE_COL}",
+            f"{WU_MPD_REFERENCE_COL}_minus_Mpd_Wu_{wtag}",
             f"tau_c_{wtag}_sec",
             f"tau_p_max_{wtag}_sec",
             f"tau_p_end_{wtag}_sec",
@@ -857,7 +1266,20 @@ def _format_window_tag(w: float) -> str:
     return f"{int(w)}s" if float(w).is_integer() else f"{w:g}s"
 
 
-def _prepare_pd_for_plot(df: pd.DataFrame, pd_col: str) -> pd.DataFrame:
+def get_pd_column_for_plot(df: pd.DataFrame, wtag: str) -> Tuple[Optional[str], str, float]:
+    """
+    Select Pd column and unit for report plots.
+
+    Returns:
+        pd_col, pd_unit, min_value
+    """
+    if f"Pd_{wtag}_cm" in df.columns:
+        return f"Pd_{wtag}_cm", "cm", float(PLOT_MIN_PD_CM)
+
+    return None, "cm", np.nan
+
+
+def _prepare_pd_for_plot(df: pd.DataFrame, pd_col: str, min_pd_value: float) -> pd.DataFrame:
     """
     Prepare Pd column for plotting.
     """
@@ -867,7 +1289,7 @@ def _prepare_pd_for_plot(df: pd.DataFrame, pd_col: str) -> pd.DataFrame:
     tmp = tmp[tmp[pd_col] > 0]
 
     if PLOT_LOG10_PD:
-        tmp = tmp[tmp[pd_col] >= PLOT_MIN_PD_NM]
+        tmp = tmp[tmp[pd_col] >= float(min_pd_value)]
         tmp["Pd_plot"] = np.log10(tmp[pd_col].astype(float))
     else:
         tmp["Pd_plot"] = tmp[pd_col].astype(float)
@@ -890,15 +1312,15 @@ def plot_pd_vs_ml(p_df: pd.DataFrame) -> None:
 
     for w in P_WINDOWS_SEC:
         wtag = _format_window_tag(w)
-        pd_col = f"Pd_{wtag}_nm"
+        pd_col, pd_unit, min_pd_value = get_pd_column_for_plot(p_df, wtag)
 
-        if pd_col not in p_df.columns:
+        if pd_col is None or pd_col not in p_df.columns:
             continue
 
         tmp = p_df[[ml_col, pd_col, "distance_km"]].copy()
         tmp[ml_col] = pd.to_numeric(tmp[ml_col], errors="coerce")
         tmp = tmp[np.isfinite(tmp[ml_col])]
-        tmp = _prepare_pd_for_plot(tmp, pd_col)
+        tmp = _prepare_pd_for_plot(tmp, pd_col, min_pd_value)
 
         if tmp.empty:
             continue
@@ -908,9 +1330,9 @@ def plot_pd_vs_ml(p_df: pd.DataFrame) -> None:
 
         ax.set_xlabel(ml_label)
         if PLOT_LOG10_PD:
-            ax.set_ylabel(f"log10(Pd {wtag}) [nm]")
+            ax.set_ylabel(f"log10(Pd {wtag}) [{pd_unit}]")
         else:
-            ax.set_ylabel(f"Pd {wtag} [nm]")
+            ax.set_ylabel(f"Pd {wtag} [{pd_unit}]")
 
         ax.set_title(f"Pd {wtag} amplitude versus {ml_label}")
         ax.grid(True, alpha=0.3)
@@ -944,15 +1366,15 @@ def plot_pd_vs_distance(p_df: pd.DataFrame) -> None:
 
     for w in P_WINDOWS_SEC:
         wtag = _format_window_tag(w)
-        pd_col = f"Pd_{wtag}_nm"
+        pd_col, pd_unit, min_pd_value = get_pd_column_for_plot(p_df, wtag)
 
-        if pd_col not in p_df.columns:
+        if pd_col is None or pd_col not in p_df.columns:
             continue
 
         tmp = p_df[["distance_km", pd_col, "header_ML"]].copy()
         tmp["distance_km"] = pd.to_numeric(tmp["distance_km"], errors="coerce")
         tmp = tmp[np.isfinite(tmp["distance_km"])]
-        tmp = _prepare_pd_for_plot(tmp, pd_col)
+        tmp = _prepare_pd_for_plot(tmp, pd_col, min_pd_value)
 
         if tmp.empty:
             continue
@@ -962,9 +1384,9 @@ def plot_pd_vs_distance(p_df: pd.DataFrame) -> None:
 
         ax.set_xlabel("Distance [km]")
         if PLOT_LOG10_PD:
-            ax.set_ylabel(f"log10(Pd {wtag}) [nm]")
+            ax.set_ylabel(f"log10(Pd {wtag}) [{pd_unit}]")
         else:
-            ax.set_ylabel(f"Pd {wtag} [nm]")
+            ax.set_ylabel(f"Pd {wtag} [{pd_unit}]")
 
         ax.set_title(f"Pd {wtag} amplitude versus distance")
         ax.grid(True, alpha=0.3)
@@ -1002,16 +1424,16 @@ def plot_pd_vs_ml_by_distance_color(p_df: pd.DataFrame) -> None:
 
     for w in P_WINDOWS_SEC:
         wtag = _format_window_tag(w)
-        pd_col = f"Pd_{wtag}_nm"
+        pd_col, pd_unit, min_pd_value = get_pd_column_for_plot(p_df, wtag)
 
-        if pd_col not in p_df.columns:
+        if pd_col is None or pd_col not in p_df.columns:
             continue
 
         tmp = p_df[[ml_col, "distance_km", pd_col]].copy()
         tmp[ml_col] = pd.to_numeric(tmp[ml_col], errors="coerce")
         tmp["distance_km"] = pd.to_numeric(tmp["distance_km"], errors="coerce")
         tmp = tmp[np.isfinite(tmp[ml_col]) & np.isfinite(tmp["distance_km"])]
-        tmp = _prepare_pd_for_plot(tmp, pd_col)
+        tmp = _prepare_pd_for_plot(tmp, pd_col, min_pd_value)
 
         if tmp.empty:
             continue
@@ -1030,9 +1452,9 @@ def plot_pd_vs_ml_by_distance_color(p_df: pd.DataFrame) -> None:
 
         ax.set_xlabel(ml_label)
         if PLOT_LOG10_PD:
-            ax.set_ylabel(f"log10(Pd {wtag}) [nm]")
+            ax.set_ylabel(f"log10(Pd {wtag}) [{pd_unit}]")
         else:
-            ax.set_ylabel(f"Pd {wtag} [nm]")
+            ax.set_ylabel(f"Pd {wtag} [{pd_unit}]")
 
         ax.set_title(f"Pd {wtag} versus {ml_label}, colored by distance")
         ax.grid(True, alpha=0.3)
@@ -1077,6 +1499,154 @@ def plot_residual_hist_passed_rejected(passed: pd.DataFrame, rejected: pd.DataFr
     plt.close(fig)
 
 
+def plot_wu_mpd_vs_reference(p_df: pd.DataFrame) -> None:
+    """
+    Plot Wu Mpd versus reference magnitude.
+    """
+    if p_df.empty or WU_MPD_REFERENCE_COL not in p_df.columns:
+        return
+
+    ref = pd.to_numeric(p_df[WU_MPD_REFERENCE_COL], errors="coerce")
+
+    for w in P_WINDOWS_SEC:
+        wtag = _format_window_tag(w)
+        mpd_col = f"Mpd_Wu_{wtag}"
+
+        if mpd_col not in p_df.columns:
+            continue
+
+        mpd = pd.to_numeric(p_df[mpd_col], errors="coerce")
+        ok = np.isfinite(ref) & np.isfinite(mpd)
+
+        if ok.sum() < 3:
+            continue
+
+        x = ref[ok].to_numpy(dtype=float)
+        y = mpd[ok].to_numpy(dtype=float)
+
+        fig, ax = plt.subplots(figsize=(6.8, 6.2))
+        ax.scatter(x, y, s=20, alpha=0.75)
+
+        lo = float(np.nanmin([np.nanmin(x), np.nanmin(y)]))
+        hi = float(np.nanmax([np.nanmax(x), np.nanmax(y)]))
+        pad = 0.25
+        ax.plot([lo - pad, hi + pad], [lo - pad, hi + pad], linewidth=1.2, label="1:1")
+
+        residual = y - x
+        med = float(np.nanmedian(residual))
+        mean = float(np.nanmean(residual))
+        std = float(np.nanstd(residual, ddof=1)) if residual.size > 1 else np.nan
+
+        ax.set_xlim(lo - pad, hi + pad)
+        ax.set_ylim(lo - pad, hi + pad)
+        ax.set_xlabel(WU_MPD_REFERENCE_COL)
+        ax.set_ylabel(f"Wu Mpd {wtag}")
+        ax.set_title(
+            f"Wu Mpd {wtag} versus {WU_MPD_REFERENCE_COL}\n"
+            f"median(Mpd-ref)={med:.3f}, mean={mean:.3f}, std={std:.3f}, n={ok.sum()}"
+        )
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+
+        fig.tight_layout()
+        out = OUTPUT_FIG_ROOT / f"Mpd_Wu_{wtag}_vs_{WU_MPD_REFERENCE_COL}.png"
+        fig.savefig(out, dpi=300)
+        plt.close(fig)
+
+
+def plot_wu_mpd_residual_hist(p_df: pd.DataFrame) -> None:
+    """
+    Plot histogram of Wu Mpd minus reference magnitude.
+    """
+    if p_df.empty:
+        return
+
+    for w in P_WINDOWS_SEC:
+        wtag = _format_window_tag(w)
+        diff_col = f"Mpd_Wu_{wtag}_minus_{WU_MPD_REFERENCE_COL}"
+
+        if diff_col not in p_df.columns:
+            continue
+
+        vals = pd.to_numeric(p_df[diff_col], errors="coerce")
+        vals = vals[np.isfinite(vals)]
+
+        if len(vals) < 3:
+            continue
+
+        fig, ax = plt.subplots(figsize=(7.2, 5.3))
+        ax.hist(vals, bins=35, alpha=0.75)
+        ax.axvline(0.0, linewidth=1.0)
+        ax.axvline(float(np.nanmedian(vals)), linestyle="--", linewidth=1.1, label="median")
+        ax.set_xlabel(f"Wu Mpd {wtag} - {WU_MPD_REFERENCE_COL}")
+        ax.set_ylabel("Count")
+        ax.set_title(
+            f"Wu Mpd residual histogram ({wtag})\n"
+            f"median={np.nanmedian(vals):.3f}, mean={np.nanmean(vals):.3f}, "
+            f"std={np.nanstd(vals, ddof=1):.3f}, n={len(vals)}"
+        )
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+
+        fig.tight_layout()
+        out = OUTPUT_FIG_ROOT / f"Mpd_Wu_{wtag}_minus_{WU_MPD_REFERENCE_COL}_hist.png"
+        fig.savefig(out, dpi=300)
+        plt.close(fig)
+
+
+def plot_wu_mpd_residual_vs_distance(p_df: pd.DataFrame) -> None:
+    """
+    Plot Wu Mpd minus reference magnitude versus distance.
+    """
+    if p_df.empty or "distance_km" not in p_df.columns:
+        return
+
+    dist = pd.to_numeric(p_df["distance_km"], errors="coerce")
+
+    for w in P_WINDOWS_SEC:
+        wtag = _format_window_tag(w)
+        diff_col = f"Mpd_Wu_{wtag}_minus_{WU_MPD_REFERENCE_COL}"
+
+        if diff_col not in p_df.columns:
+            continue
+
+        diff = pd.to_numeric(p_df[diff_col], errors="coerce")
+        ok = np.isfinite(dist) & np.isfinite(diff)
+
+        if ok.sum() < 3:
+            continue
+
+        x = dist[ok].to_numpy(dtype=float)
+        y = diff[ok].to_numpy(dtype=float)
+
+        fig, ax = plt.subplots(figsize=(7.4, 5.4))
+        ax.scatter(x, y, s=20, alpha=0.75)
+        ax.axhline(0.0, linewidth=1.0)
+
+        ax.set_xlabel("Distance [km]")
+        ax.set_ylabel(f"Wu Mpd {wtag} - {WU_MPD_REFERENCE_COL}")
+        ax.set_title(f"Wu Mpd residual versus distance ({wtag})")
+        ax.grid(True, alpha=0.3)
+
+        fig.tight_layout()
+        out = OUTPUT_FIG_ROOT / f"Mpd_Wu_{wtag}_minus_{WU_MPD_REFERENCE_COL}_vs_distance.png"
+        fig.savefig(out, dpi=300)
+        plt.close(fig)
+
+
+def plot_wu_mpd_results(p_df: pd.DataFrame) -> None:
+    """
+    Generate all Wu Mpd diagnostic plots.
+    """
+    if not PLOT_WU_MPD_RESULTS:
+        return
+
+    plot_wu_mpd_vs_reference(p_df)
+    plot_wu_mpd_residual_hist(p_df)
+    plot_wu_mpd_residual_vs_distance(p_df)
+
+
+
 def make_all_plots(
     passed_df: pd.DataFrame,
     rejected_df: pd.DataFrame,
@@ -1086,11 +1656,13 @@ def make_all_plots(
     Generate all report figures.
     """
     OUTPUT_FIG_ROOT.mkdir(parents=True, exist_ok=True)
+    PD_PEAK_CHECK_FIG_ROOT.mkdir(parents=True, exist_ok=True)
 
     plot_residual_hist_passed_rejected(passed_df, rejected_df)
     plot_pd_vs_ml(p_df)
     plot_pd_vs_distance(p_df)
     plot_pd_vs_ml_by_distance_color(p_df)
+    plot_wu_mpd_results(p_df)
 
 
 # =====================================================================
@@ -1105,9 +1677,15 @@ def write_config(filter_info: dict) -> None:
         f.write(f"Input velocity root: {INPUT_VEL_ROOT}\n")
         f.write(f"Output report root: {OUTPUT_REPORT_ROOT}\n")
         f.write(f"Output figure root: {OUTPUT_FIG_ROOT}\n")
+        f.write(f"Pd peak check figure root: {PD_PEAK_CHECK_FIG_ROOT}\n")
         f.write(f"P components: {P_COMPONENTS}\n")
         f.write(f"Required components in SAC: {REQUIRED_COMPONENTS_IN_SAC}\n")
         f.write(f"P windows sec: {P_WINDOWS_SEC}\n")
+        f.write(f"MAKE_PD_PEAK_CHECK_PLOTS: {MAKE_PD_PEAK_CHECK_PLOTS}\n")
+        f.write(f"PLOT_REJECTED_WAVEFORM_CHECKS: {PLOT_REJECTED_WAVEFORM_CHECKS}\n")
+        f.write(f"PD_PEAK_CHECK_WINDOW_SEC: {PD_PEAK_CHECK_WINDOW_SEC}\n")
+        f.write(f"PD_PEAK_PLOT_PRE_P_SEC: {PD_PEAK_PLOT_PRE_P_SEC}\n")
+        f.write(f"PD_PEAK_PLOT_POST_P_SEC: {PD_PEAK_PLOT_POST_P_SEC}\n")
         f.write(f"VP fallback: {VP}\n")
         f.write(f"Displacement unit: {DISP_UNIT}\n")
         f.write(f"Velocity unit: {VEL_UNIT}\n")
@@ -1126,10 +1704,24 @@ def write_config(filter_info: dict) -> None:
         f.write(f"TAUP_SMOOTHING_TAU_SEC: {TAUP_SMOOTHING_TAU_SEC}\n")
         f.write(f"REMOVE_PREP_MEAN_FOR_PD: {REMOVE_PREP_MEAN_FOR_PD}\n")
         f.write(f"REMOVE_PREP_MEAN_FOR_VELOCITY: {REMOVE_PREP_MEAN_FOR_VELOCITY}\n")
+        f.write(f"APPLY_PD_HIGHPASS_FILTER: {APPLY_PD_HIGHPASS_FILTER}\n")
+        f.write(f"PD_HIGHPASS_FREQ_HZ: {PD_HIGHPASS_FREQ_HZ}\n")
+        f.write(f"PD_HIGHPASS_CORNERS: {PD_HIGHPASS_CORNERS}\n")
+        f.write(f"PD_HIGHPASS_ZEROPHASE: {PD_HIGHPASS_ZEROPHASE}\n")
+        f.write(f"PD_HIGHPASS_TAPER_MAX_PERCENTAGE: {PD_HIGHPASS_TAPER_MAX_PERCENTAGE}\n")
+        f.write(f"PD_HIGHPASS_DETREND: {PD_HIGHPASS_DETREND}\n")
+        f.write(f"NM_TO_CM: {NM_TO_CM}\n")
+        f.write(f"WU_MPD_A: {WU_MPD_A}\n")
+        f.write(f"WU_MPD_B: {WU_MPD_B}\n")
+        f.write(f"WU_MPD_C: {WU_MPD_C}\n")
+        f.write(f"WU_MPD_REFERENCE_COL: {WU_MPD_REFERENCE_COL}\n")
+        f.write(f"PLOT_WU_MPD_RESULTS: {PLOT_WU_MPD_RESULTS}\n")
         f.write(f"MAKE_PLOTS: {MAKE_PLOTS}\n")
         f.write(f"PLOT_USE_HEADER_ML: {PLOT_USE_HEADER_ML}\n")
+        f.write(f"PLOT_PD_UNIT: {PLOT_PD_UNIT}\n")
         f.write(f"PLOT_LOG10_PD: {PLOT_LOG10_PD}\n")
         f.write(f"PLOT_MIN_PD_NM: {PLOT_MIN_PD_NM}\n")
+        f.write(f"PLOT_MIN_PD_CM: {PLOT_MIN_PD_CM}\n")
 
         f.write("\nFilter statistics:\n")
         for k, v in filter_info.items():
@@ -1167,10 +1759,15 @@ def main() -> None:
 
     all_rows: List[dict] = []
 
-    print("[INFO] Measuring P-wave Pd, tau_c, and tau_p for passed station-event rows...")
+    if MAKE_PD_PEAK_CHECK_PLOTS and PLOT_REJECTED_WAVEFORM_CHECKS and not rejected_df.empty:
+        print("[INFO] Making Pd peak-check plots for rejected station-event rows...")
+        for _, row in rejected_df.iterrows():
+            process_passed_row(row, collect_metrics=False)
+
+    print("[INFO] Measuring P-wave Pd, tau_c, and tau_p for accepted station-event rows...")
 
     for _, row in passed_df.iterrows():
-        rows = process_passed_row(row)
+        rows = process_passed_row(row, collect_metrics=True)
         all_rows.extend(rows)
 
     if not all_rows:
@@ -1193,6 +1790,7 @@ def main() -> None:
     print("========== DONE ==========")
     print(f"Output root      : {OUTPUT_REPORT_ROOT}")
     print(f"Figure root      : {OUTPUT_FIG_ROOT}")
+    print(f"Pd peak figures  : {PD_PEAK_CHECK_FIG_ROOT}")
     print(f"P table          : {P_TABLE_CSV}")
     print(f"Event summary    : {EVENT_SUMMARY_CSV}")
     print(f"Success log      : {SUCCESS_LOG}")
@@ -1211,6 +1809,10 @@ def main() -> None:
             print(f"  {OUTPUT_FIG_ROOT / f'Pd_{wtag}_vs_ML.png'}")
             print(f"  {OUTPUT_FIG_ROOT / f'Pd_{wtag}_vs_distance.png'}")
             print(f"  {OUTPUT_FIG_ROOT / f'Pd_{wtag}_vs_ML_color_distance.png'}")
+            if PLOT_WU_MPD_RESULTS:
+                print(f"  {OUTPUT_FIG_ROOT / f'Mpd_Wu_{wtag}_vs_{WU_MPD_REFERENCE_COL}.png'}")
+                print(f"  {OUTPUT_FIG_ROOT / f'Mpd_Wu_{wtag}_minus_{WU_MPD_REFERENCE_COL}_hist.png'}")
+                print(f"  {OUTPUT_FIG_ROOT / f'Mpd_Wu_{wtag}_minus_{WU_MPD_REFERENCE_COL}_vs_distance.png'}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,57 @@
+Pd scale-factor calibration
+===========================
+
+Input CSV: output/03_report_P_amp_filter_2sdt/P_amp_tau_Z_3s_passed_2sdt.csv
+Output CSV: output/03_report_P_amp_filter_2sdt/pd_scale_calibration/pd_scale_calibrated_table.csv
+Equation: Mpd = 4.748 + 1.371*log10(Pd_cm) + 1.883*log10(R_km)
+
+Rows
+----
+Input rows: 1766
+Valid rows: 1756
+Rows used for factor: 1723
+Residual clipping: True
+Residual clip magnitude: +/-2.0
+
+Scale factor
+------------
+Center used: median
+median(header_ML - Mpd_raw): 0.763282
+extra_scale_factor F: 3.6035746
+base_nm_to_cm_factor: 1e-07
+FINAL_NM_TO_CM_FACTOR = base * F: 3.6035746e-07
+
+How to use this factor
+----------------------
+Option A, keep NM_TO_CM=1e-7 and add:
+    PD_EMPIRICAL_SCALE_FACTOR = 3.6035746
+
+Option B, directly replace NM_TO_CM with:
+    NM_TO_CM = 3.6035746e-07
+
+Residual statistics: raw Mpd - header ML
+----------------------------------------
+n: 1756
+mean: -0.7544222168752389
+median: -0.7751601861326904
+std: 0.5914572750960685
+mad: 0.3495429956668139
+robust_sigma: 0.5182324453756183
+
+Residual statistics: calibrated Mpd - header ML
+-----------------------------------------------
+n: 1756
+mean: 0.008859431642683218
+median: -0.011878537614767426
+std: 0.5914572750960685
+mad: 0.349542995666813
+robust_sigma: 0.518232445375617
+
+Statistics of header_ML - Mpd_raw used for factor
+-------------------------------------------------
+n: 1723
+mean: 0.7221299668418572
+median: 0.7632816485179221
+std: 0.541059134412779
+mad: 0.346251979324645
+robust_sigma: 0.5133531845467186

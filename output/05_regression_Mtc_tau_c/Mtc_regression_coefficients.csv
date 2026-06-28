@@ -1,0 +1,7 @@
+parameter,value,standard_error,description
+A,3.3451390225782394,0.015002072746620033,intercept
+B,0.022628803322859842,0.03192002941067765,coefficient for log10(tau_c_3s_sec)
+sigma_res,0.6283697867660366,,"magnitude residual scatter, mode=ols"
+sigma_res_ols,0.6283697867660366,,sqrt(SSE/(N-2)) in magnitude units
+sigma_res_std,0.6281907385256826,,standard deviation of magnitude residuals
+sigma_res_robust,0.4949334251161357,,1.4826*MAD of magnitude residuals
